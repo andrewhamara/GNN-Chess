@@ -135,7 +135,7 @@ def to_pgn(
     round: str='?',
     player0: str='?',
     player1: str='?',
-    result: str | int='?',
+    result: Union[str, int]='?',
     gardner: bool=False,
     pgc: Optional[ModuleType]=None
 ) -> str:

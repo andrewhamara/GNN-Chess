@@ -11,12 +11,12 @@ TypeError: unsupported operand type(s) for |: 'ABCMeta' and 'NoneType'
 
 ## Files Fixed
 
-The following files had union type syntax replaced with `Optional` from the `typing` module:
+The following files had union type syntax replaced with `Optional` and `Union` from the `typing` module:
 
 1. **models_deprecated.py** (3 occurrences)
-2. **models.py** (4 occurrences)
+2. **models.py** (5 occurrences - including return type annotation)
 3. **train.py** (1 occurrence)
-4. **utils.py** (2 occurrences)
+4. **utils.py** (3 occurrences)
 
 ## Changes Made
 
@@ -25,15 +25,21 @@ The following files had union type syntax replaced with `Optional` from the `typ
 mask: jnp.ndarray | None = None
 name: str | None = "BlockV2"
 pgc: ModuleType | None = None
+result: str | int = '?'
+def foo() -> Tuple[int, int] | Tuple[str, str]:
+    ...
 ```
 
 ### After (Python 3.9+ compatible):
 ```python
-from typing import Optional
+from typing import Optional, Union
 
 mask: Optional[jnp.ndarray] = None
 name: Optional[str] = "BlockV2"
 pgc: Optional[ModuleType] = None
+result: Union[str, int] = '?'
+def foo() -> Union[Tuple[int, int], Tuple[str, str]]:
+    ...
 ```
 
 ## Verification

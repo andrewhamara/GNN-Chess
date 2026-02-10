@@ -1,5 +1,5 @@
 import pickle
-from typing import cast, overload, Literal, Mapping, NamedTuple, Optional, Tuple
+from typing import cast, overload, Literal, Mapping, NamedTuple, Optional, Tuple, Union
 from functools import partial
 
 from pgx import Env
@@ -690,9 +690,9 @@ class ModelManager(NamedTuple):
         legal_action_mask: jnp.ndarray,
         params: chex.ArrayTree,
         training: bool=False
-    ) -> Tuple[jnp.ndarray, jnp.ndarray] | Tuple[
+    ) -> Union[
         Tuple[jnp.ndarray, jnp.ndarray],
-        chex.ArrayTree
+        Tuple[Tuple[jnp.ndarray, jnp.ndarray], chex.ArrayTree]
     ]:
         if self.use_graph:
             r_tuple, batch_stats = self.model.apply(
