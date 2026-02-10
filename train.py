@@ -253,12 +253,18 @@ def loss_fn(
     samples: Sample,
     model: ModelManager
 ) -> Tuple[jnp.ndarray, Tuple[chex.ArrayTree, jnp.ndarray, jnp.ndarray]]:
-    (logits, value), batch_stats = model(
+    # stop_gradient on graph construction: it doesn't depend on model params,
+    # and excluding it from the gradient tape avoids compiling its complex
+    # boolean/indexing ops into the backward pass (prevents LLVM mma16816 error).
+    graph = jax.lax.stop_gradient(
         model.format_data(
             board=samples.board,
             observation=samples.obs,
             legal_action_mask=samples.lam
-        ),
+        )
+    )
+    (logits, value), batch_stats = model(
+        graph,
         legal_action_mask=samples.lam,
         params={'params': params, 'batch_stats': batch_stats},
         training=True
