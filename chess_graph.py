@@ -106,19 +106,28 @@ def _diagonal_edges(size: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     return np.array(senders), np.array(receivers), np.array(feats, dtype=np.float32)
 
 
-# Precomputed static edges for both board sizes
-_STATIC_EDGES: dict = {}
+# Precompute static edges at module load time (outside JIT context)
+_STATIC_EDGES_8x8 = {
+    'grid': _grid_edges(8),
+    'file': _file_edges(8),
+    'rank': _rank_edges(8),
+    'diagonal': _diagonal_edges(8),
+}
+_STATIC_EDGES_5x5 = {
+    'grid': _grid_edges(5),
+    'file': _file_edges(5),
+    'rank': _rank_edges(5),
+    'diagonal': _diagonal_edges(5),
+}
 
 def _get_static_edges(size: int):
-    """Return cached static edges for the given board size."""
-    if size not in _STATIC_EDGES:
-        _STATIC_EDGES[size] = {
-            'grid': _grid_edges(size),
-            'file': _file_edges(size),
-            'rank': _rank_edges(size),
-            'diagonal': _diagonal_edges(size),
-        }
-    return _STATIC_EDGES[size]
+    """Return precomputed static edges for the given board size."""
+    if size == 8:
+        return _STATIC_EDGES_8x8
+    elif size == 5:
+        return _STATIC_EDGES_5x5
+    else:
+        raise ValueError(f"Unsupported board size: {size}. Use 5 or 8.")
 
 
 # ---------------------------------------------------------------------------
@@ -202,15 +211,25 @@ def _build_between(size: int) -> np.ndarray:
     return table
 
 
-_VISION_TABLES: dict = {}
+# Precompute vision tables at module load time (outside JIT context)
+# This avoids JAX tracer leaks when used inside jit-compiled functions
+_VISION_TABLES_8x8 = {
+    'can_reach': jnp.array(_build_piece_can_reach(8)),
+    'between': jnp.array(_build_between(8)),
+}
+_VISION_TABLES_5x5 = {
+    'can_reach': jnp.array(_build_piece_can_reach(5)),
+    'between': jnp.array(_build_between(5)),
+}
 
 def _get_vision_tables(size: int):
-    if size not in _VISION_TABLES:
-        _VISION_TABLES[size] = {
-            'can_reach': jnp.array(_build_piece_can_reach(size)),
-            'between': jnp.array(_build_between(size)),
-        }
-    return _VISION_TABLES[size]
+    """Get precomputed vision tables for the given board size."""
+    if size == 8:
+        return _VISION_TABLES_8x8
+    elif size == 5:
+        return _VISION_TABLES_5x5
+    else:
+        raise ValueError(f"Unsupported board size: {size}. Use 5 or 8.")
 
 
 def _vision_edges(
