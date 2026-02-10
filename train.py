@@ -5,7 +5,7 @@ import time
 from functools import partial
 import os
 import pickle
-from typing import Tuple
+from typing import Optional, Tuple
 
 from aim import Run
 import chex
@@ -378,7 +378,7 @@ def evaluate(
     max_plies: int=512,
     n_sim: int=128,
     save_n_games: int=0,
-    games_file: str | None=None,
+    games_file: Optional[str]=None,
     round_name: str="Evaluation",
 ) -> Tuple[jnp.ndarray, float, float, float, float]:
     R, games = mcts.full_pit(

@@ -158,8 +158,8 @@ class AttentionPooling(nn.Module):
         *args,
         x: jnp.ndarray,
         segment_ids: jnp.ndarray,
-        mask: jnp.ndarray | None=None,
-        num_segments: int | None=None,
+        mask: Optional[jnp.ndarray]=None,
+        num_segments: Optional[int]=None,
         **kwargs
     ):
         if mask is None:
@@ -280,7 +280,7 @@ class EdgeNet(nn.Module):
 
 class BlockV1(nn.Module):
     num_channels: int
-    name: str | None = "BlockV1"
+    name: Optional[str] = "BlockV1"
 
     @nn.compact
     def __call__(self, *args, x, training, **kwargs):

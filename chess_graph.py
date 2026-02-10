@@ -213,10 +213,6 @@ def _get_vision_tables(size: int):
     return _VISION_TABLES[size]
 
 
-# Sliding piece type indices (B, R, Q for both colors)
-_SLIDING_TYPES = jnp.array([2, 3, 4, 8, 9, 10])
-
-
 def _vision_edges(
     observation: jnp.ndarray,
     offset_id: int,
@@ -264,7 +260,11 @@ def _vision_edges(
     geometric_reach = geometric_reach & from_occupied & (from_sq != to_sq)
 
     # Check blocking for sliding pieces
-    is_sliding = jnp.isin(safe_piece, _SLIDING_TYPES)
+    # Note: jnp.isin can cause issues, use explicit comparison instead
+    is_sliding = (
+        (safe_piece == 2) | (safe_piece == 3) | (safe_piece == 4) |  # B, R, Q (white)
+        (safe_piece == 8) | (safe_piece == 9) | (safe_piece == 10)   # b, r, q (black)
+    )
     between_sqs = between[from_sq, to_sq]  # (N*N, max_between)
     # A square blocks if it's occupied and the between index is valid
     between_occupied = jnp.where(
@@ -520,7 +520,7 @@ def state_to_hetero_graph(
         # Tile for each batch element with offset
         all_s = (s_j[None, :] + offsets[:, None]).reshape(-1).astype(jnp.int32)
         all_r = (r_j[None, :] + offsets[:, None]).reshape(-1).astype(jnp.int32)
-        all_f = jnp.tile(f_j, (batch_size, 1))
+        all_f = jnp.tile(f_j, (batch_size, 1)).reshape(-1, f_j.shape[-1])
         return EdgeSet(senders=all_s, receivers=all_r, features=all_f)
 
     grid_es = _static_to_edgeset('grid')

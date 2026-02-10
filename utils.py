@@ -86,7 +86,7 @@ def move_pgn(
     i: int,
     brackets: bool=False,
     gardner: bool=False,
-    pgc: ModuleType | None=None
+    pgc: Optional[ModuleType]=None
 ) -> str:
     assert(pgc is not None)
     moves_from, moves_plane = (move // 49, move % 49) if gardner else (move // 73, move % 73)
@@ -137,7 +137,7 @@ def to_pgn(
     player1: str='?',
     result: str | int='?',
     gardner: bool=False,
-    pgc: ModuleType | None=None
+    pgc: Optional[ModuleType]=None
 ) -> str:
     first_player = moves[0][3]
     white, black = player0, player1

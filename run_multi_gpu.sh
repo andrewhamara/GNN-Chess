@@ -18,7 +18,7 @@ echo
 
 # Check if JAX with GPU support is available
 echo "Checking JAX GPU support..."
-python -c "
+pixi run python -c "
 import jax
 devices = jax.devices()
 print(f'Available devices: {devices}')
@@ -26,10 +26,10 @@ print(f'Device count: {jax.device_count()}')
 print(f'Backend: {jax.default_backend()}')
 if jax.default_backend() != 'gpu':
     print('WARNING: JAX is not using GPU backend!')
-    print('Install JAX with CUDA support:')
-    print('  pip install --upgrade \"jax[cuda12]\"')
-    exit(1)
-" || exit 1
+    print('May need to reinstall JAX with CUDA support')
+" || {
+    echo "Note: Running on CPU (no GPU detected or JAX not GPU-enabled)"
+}
 
 echo
 echo "Starting training..."
@@ -37,8 +37,8 @@ echo
 
 if [ -n "$GPUS" ]; then
     echo "Using GPUs: $GPUS"
-    CUDA_VISIBLE_DEVICES=$GPUS python train_hetero.py
+    CUDA_VISIBLE_DEVICES=$GPUS XLA_PYTHON_CLIENT_ALLOCATOR=platform pixi run python train_hetero.py
 else
     echo "Using all available GPUs"
-    python train_hetero.py
+    XLA_PYTHON_CLIENT_ALLOCATOR=platform pixi run python train_hetero.py
 fi

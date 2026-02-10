@@ -3,8 +3,19 @@
 ## ⚡ 3-Step Setup
 
 ### 1. Verify GPU Setup
+
+**First, run the minimal test:**
+```bash
+python minimal_test.py
+# Or if using pixi:
+pixi run python minimal_test.py
+```
+
+**Then run the full test suite:**
 ```bash
 python test_hetero_graph.py
+# Or if using pixi:
+pixi run test
 ```
 
 Expected output:

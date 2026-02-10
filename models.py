@@ -22,8 +22,8 @@ class AttentionPooling(nn.Module):
         *args,
         x: jnp.ndarray,
         segment_ids: jnp.ndarray,
-        mask: jnp.ndarray | None=None,
-        num_segments: int | None=None,
+        mask: Optional[jnp.ndarray]=None,
+        num_segments: Optional[int]=None,
         **kwargs
     ):
         if mask is None:
@@ -573,7 +573,7 @@ class AlphaGateau(nn.Module):
 
 class BlockV2(nn.Module):
     num_channels: int
-    name: str | None = "BlockV2"
+    name: Optional[str] = "BlockV2"
 
     @nn.compact
     def __call__(self, *args, x, training, **kwargs):
@@ -595,7 +595,7 @@ class AZNet(nn.Module):
     n_res_layers: int = 5 # num_blocks
     resnet_v2: bool = True
     resnet_cls = BlockV2
-    name: str | None = "az_net"
+    name: Optional[str] = "az_net"
     # Useless parameters
     dot_v2: bool = True
     use_embedding: bool = True

@@ -10,6 +10,12 @@ version = "0.1.0"
     cmd = "python train.py"
     [tasks.train.env]
     XLA_PYTHON_CLIENT_ALLOCATOR = "platform"
+[tasks.train-hetero]
+    cmd = "python train_hetero.py"
+    [tasks.train-hetero.env]
+    XLA_PYTHON_CLIENT_ALLOCATOR = "platform"
+[tasks.test]
+    cmd = "python test_hetero_graph.py"
 [tasks.rank]
     cmd = "python ranking.py"
     [tasks.rank.env]
