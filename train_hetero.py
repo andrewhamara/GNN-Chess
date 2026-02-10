@@ -60,6 +60,9 @@ train.config['shuffle_window'] = True
 # Optional: Debug/profiling settings
 # ============================================================================
 
+# Disable Aim experiment tracking (if Aim server not running)
+train.config['debug'] = True  # Skip Aim logging
+
 # Uncomment to enable JAX profiling
 # import jax
 # jax.config.update('jax_log_compiles', True)  # Log compilation times

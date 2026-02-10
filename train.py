@@ -418,7 +418,7 @@ def evaluate(
 
 
 def main():
-    debug = False
+    debug = config.get('debug', False)  # Allow override via config
 
     run = None
     run_name = "EdgeNet" if config['use_gnn'] else "AZNet"
