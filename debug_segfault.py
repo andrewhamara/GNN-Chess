@@ -67,7 +67,7 @@ except Exception as e:
 # Test 6: Add batch dimension
 print("\n[6/8] Adding batch dimension...")
 try:
-    state = jax.tree_map(lambda x: x[None], state)
+    state = jax.tree.map(lambda x: x[None], state)
     print(f"✓ Batch dimension added")
     print(f"  Observation shape: {state.observation.shape}")
 except Exception as e:

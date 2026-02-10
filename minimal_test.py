@@ -19,7 +19,7 @@ env = pgx.make("chess")
 
 print("Initializing state...")
 state = env.init(jax.random.PRNGKey(0))
-state = jax.tree_map(lambda x: x[None], state)
+state = jax.tree.map(lambda x: x[None], state)
 
 print(f"Observation shape: {state.observation.shape}")
 print(f"Legal action mask shape: {state.legal_action_mask.shape}")

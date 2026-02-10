@@ -405,6 +405,7 @@ class HeteroEdgeNet(nn.Module):
         v = jax.nn.relu(v)
         v = nn.Dense(1)(v)
         v = nn.tanh(v)
+        v = v.squeeze(-1)  # Remove last dimension to match expected shape
 
         return logits, v
 

@@ -29,7 +29,7 @@ def test_graph_construction():
 
     env = pgx.make("chess")
     state = env.init(jax.random.PRNGKey(0))
-    state = jax.tree_map(lambda x: x[None], state)  # Add batch dim
+    state = jax.tree.map(lambda x: x[None], state)  # Add batch dim
 
     graph = cg.state_to_hetero_graph(state.observation, state.legal_action_mask)
 
@@ -60,7 +60,7 @@ def test_model_forward():
 
     env = pgx.make("chess")
     state = env.init(jax.random.PRNGKey(0))
-    state = jax.tree_map(lambda x: x[None], state)  # Add batch dim
+    state = jax.tree.map(lambda x: x[None], state)  # Add batch dim
 
     model = HeteroEdgeNet(
         n_actions=env.num_actions,
@@ -101,7 +101,7 @@ def test_jit_compilation():
 
     env = pgx.make("chess")
     state = env.init(jax.random.PRNGKey(0))
-    state = jax.tree_map(lambda x: x[None], state)
+    state = jax.tree.map(lambda x: x[None], state)
 
     # JIT the graph construction
     jitted_graph_fn = jax.jit(cg.state_to_hetero_graph)
@@ -156,7 +156,7 @@ def test_gradient_computation():
 
     env = pgx.make("chess")
     state = env.init(jax.random.PRNGKey(0))
-    state = jax.tree_map(lambda x: x[None], state)
+    state = jax.tree.map(lambda x: x[None], state)
 
     model = HeteroEdgeNet(n_actions=env.num_actions, inner_size=32, n_res_layers=1)
     graph = cg.state_to_hetero_graph(state.observation, state.legal_action_mask)
@@ -212,13 +212,13 @@ def test_multi_device():
     # Replicate params across devices
     model = HeteroEdgeNet(n_actions=env.num_actions, inner_size=32, n_res_layers=1)
     state = env.init(jax.random.PRNGKey(0))
-    state = jax.tree_map(lambda x: x[None], state)
+    state = jax.tree.map(lambda x: x[None], state)
     graph = cg.state_to_hetero_graph(state.observation, state.legal_action_mask)
 
     variables = model.init(jax.random.PRNGKey(42), graphs=graph)
 
     # Test device_put_replicated
-    replicated_vars = jax.tree_map(
+    replicated_vars = jax.tree.map(
         lambda x: jax.device_put_replicated(x, devices[:2]),
         variables
     )

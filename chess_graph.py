@@ -359,7 +359,7 @@ def _state_edges( # TODO: add self-edge
     action_edge_id = jnp.full(legal_action_mask.shape, -1) \
                         .at[real_moves_id] \
                         .set(jnp.arange(real_moves_id.shape[0]))
-    all_moves = jax.tree_map(lambda x: x[real_moves_id], all_moves)
+    all_moves = jax.tree.map(lambda x: x[real_moves_id], all_moves)
     edge_from = all_moves.from_ + offset_id
     edge_to = all_moves.to + offset_id
 
@@ -565,7 +565,7 @@ def state_to_hetero_graph(
 def main():
     env = pgx.make("gardner_chess")
     state = env.init(jax.random.PRNGKey(0))
-    state = jax.tree_map(lambda x: x[None], state)
+    state = jax.tree.map(lambda x: x[None], state)
 
     x = jax.jit(state_to_graph)(state.observation, state.legal_action_mask)
     # pprint(x)
