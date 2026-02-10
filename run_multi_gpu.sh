@@ -16,9 +16,18 @@ echo "GNN Chess - HeteroEdgeNet Training"
 echo "=========================================="
 echo
 
+# Detect if pixi is available, otherwise use system python
+if command -v pixi &> /dev/null; then
+    PYTHON_CMD="pixi run python"
+    echo "Using pixi environment"
+else
+    PYTHON_CMD="python3"
+    echo "Using system Python (pixi not found)"
+fi
+
 # Check if JAX with GPU support is available
 echo "Checking JAX GPU support..."
-pixi run python -c "
+$PYTHON_CMD -c "
 import jax
 devices = jax.devices()
 print(f'Available devices: {devices}')
@@ -37,8 +46,8 @@ echo
 
 if [ -n "$GPUS" ]; then
     echo "Using GPUs: $GPUS"
-    CUDA_VISIBLE_DEVICES=$GPUS XLA_PYTHON_CLIENT_ALLOCATOR=platform pixi run python train_hetero.py
+    CUDA_VISIBLE_DEVICES=$GPUS XLA_PYTHON_CLIENT_ALLOCATOR=platform $PYTHON_CMD train_hetero.py
 else
     echo "Using all available GPUs"
-    XLA_PYTHON_CLIENT_ALLOCATOR=platform pixi run python train_hetero.py
+    XLA_PYTHON_CLIENT_ALLOCATOR=platform $PYTHON_CMD train_hetero.py
 fi
