@@ -11,6 +11,7 @@ import jraph
 
 from jpyger import state_to_graph
 import chess_graph as cg
+from chess_graph import HeteroGraph, EdgeSet
 from models_deprecated import EdgeNet
 
 
@@ -189,6 +190,223 @@ class EGNN3(nn.Module):
             )
         )
         return graph._replace(nodes=graph.nodes+i, edges=graph.edges+j)
+
+
+# ---------------------------------------------------------------------------
+# Heterogeneous multi-graph modules
+# ---------------------------------------------------------------------------
+
+# Edge type names matching HeteroGraph fields (order matters)
+_EDGE_TYPE_NAMES = (
+    'move_edges', 'grid_edges', 'attack_edges', 'defense_edges',
+    'file_edges', 'rank_edges', 'diagonal_edges',
+)
+
+
+class HeteroGATEAU(nn.Module):
+    """Run separate GATEAU per edge type, sum node updates."""
+    out_dim: int = 128
+    mix_edge_node: bool = False
+    add_features: bool = True
+    self_edges: bool = False
+    simple_update: bool = True
+    sync_updates: Optional[bool] = None
+
+    @nn.compact
+    def __call__(
+        self,
+        *args,
+        nodes: jnp.ndarray,
+        edge_sets: Tuple[EdgeSet, ...],
+        training: bool = False,
+        **kwargs
+    ) -> Tuple[jnp.ndarray, Tuple[EdgeSet, ...]]:
+        """
+        Args:
+            nodes: (total_nodes, dim) — shared node features
+            edge_sets: tuple of 7 EdgeSets (one per edge type)
+            training: batch norm mode
+        Returns:
+            (new_nodes, new_edge_sets)
+        """
+        sum_n_node = nodes.shape[0]
+        # Shared BNR on nodes (applied once, not per edge type)
+        bnr_nodes = BNR()(x=nodes, training=training)
+
+        node_updates = jnp.zeros_like(bnr_nodes)
+        new_edge_sets = []
+
+        for i, es in enumerate(edge_sets):
+            # Per-edge-type BNR on edge features
+            bnr_ef = BNR(name=f"bnr_edge_{i}")(x=es.features, training=training)
+
+            # Build a temporary GraphsTuple for GATEAU
+            tmp_graph = jraph.GraphsTuple(
+                n_node=jnp.array([sum_n_node]),
+                nodes=bnr_nodes,
+                n_edge=jnp.array([es.senders.shape[0]]),
+                edges=bnr_ef,
+                senders=es.senders,
+                receivers=es.receivers,
+                globals=None,
+            )
+            out_graph = GATEAU(
+                out_dim=self.out_dim,
+                mix_edge_node=self.mix_edge_node,
+                add_features=self.add_features,
+                self_edges=self.self_edges,
+                simple_update=self.simple_update,
+                sync_updates=self.sync_updates,
+                name=f"gateau_{i}",
+            )(graph=tmp_graph)
+
+            node_updates = node_updates + cast(jnp.ndarray, out_graph.nodes)
+            new_edge_sets.append(EdgeSet(
+                senders=es.senders,
+                receivers=es.receivers,
+                features=cast(jnp.ndarray, out_graph.edges),
+            ))
+
+        return node_updates, tuple(new_edge_sets)
+
+
+class HeteroEGNN(nn.Module):
+    """Residual block: 2x HeteroGATEAU + residual on nodes and per-type edges."""
+    out_dim: int = 128
+    mix_edge_node: bool = False
+    add_features: bool = True
+    self_edges: bool = False
+    simple_update: bool = True
+    sync_updates: Optional[bool] = None
+
+    @nn.compact
+    def __call__(
+        self,
+        *args,
+        nodes: jnp.ndarray,
+        edge_sets: Tuple[EdgeSet, ...],
+        training: bool = False,
+        **kwargs
+    ) -> Tuple[jnp.ndarray, Tuple[EdgeSet, ...]]:
+        # Save residuals
+        res_nodes = nodes
+        res_edges = tuple(es.features for es in edge_sets)
+
+        # First HeteroGATEAU
+        nodes, edge_sets = HeteroGATEAU(
+            out_dim=self.out_dim,
+            mix_edge_node=self.mix_edge_node,
+            add_features=self.add_features,
+            self_edges=self.self_edges,
+            simple_update=self.simple_update,
+            sync_updates=self.sync_updates,
+        )(nodes=nodes, edge_sets=edge_sets, training=training)
+
+        # Second HeteroGATEAU
+        nodes, edge_sets = HeteroGATEAU(
+            out_dim=self.out_dim,
+            mix_edge_node=self.mix_edge_node,
+            add_features=self.add_features,
+            self_edges=self.self_edges,
+            simple_update=self.simple_update,
+            sync_updates=self.sync_updates,
+        )(nodes=nodes, edge_sets=edge_sets, training=training)
+
+        # Residual connections
+        nodes = nodes + res_nodes
+        edge_sets = tuple(
+            EdgeSet(
+                senders=es.senders,
+                receivers=es.receivers,
+                features=es.features + rf,
+            )
+            for es, rf in zip(edge_sets, res_edges)
+        )
+
+        return nodes, edge_sets
+
+
+class HeteroEdgeNet(nn.Module):
+    """Full heterogeneous multi-graph model."""
+    n_actions: int
+    inner_size: int = 128
+    n_res_layers: int = 5
+    attention_pooling: bool = True
+    mix_edge_node: bool = False
+    add_features: bool = True
+    self_edges: bool = False
+    simple_update: bool = True
+    sync_updates: Optional[bool] = None
+
+    @nn.compact
+    def __call__(
+        self,
+        *args,
+        graphs: HeteroGraph,
+        training: bool = False,
+        **kwargs
+    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        # 1. Embed nodes
+        nodes = nn.Dense(self.inner_size)(graphs.nodes)
+
+        # 2. Embed each edge type with separate Dense
+        edge_sets = []
+        raw_edge_sets = (
+            graphs.move_edges, graphs.grid_edges,
+            graphs.attack_edges, graphs.defense_edges,
+            graphs.file_edges, graphs.rank_edges, graphs.diagonal_edges,
+        )
+        for i, es in enumerate(raw_edge_sets):
+            emb_feats = nn.Dense(self.inner_size, name=f"edge_embed_{i}")(es.features)
+            edge_sets.append(EdgeSet(
+                senders=es.senders,
+                receivers=es.receivers,
+                features=emb_feats,
+            ))
+        edge_sets = tuple(edge_sets)
+
+        # 3. N residual blocks
+        for _ in range(self.n_res_layers):
+            nodes, edge_sets = HeteroEGNN(
+                out_dim=self.inner_size,
+                mix_edge_node=self.mix_edge_node,
+                add_features=self.add_features,
+                self_edges=self.self_edges,
+                simple_update=self.simple_update,
+                sync_updates=self.sync_updates,
+            )(nodes=nodes, edge_sets=edge_sets, training=training)
+
+        # 4. Policy head — uses MOVE edges (index 0)
+        x = BNR()(x=nodes, training=training)
+        move_feats = edge_sets[0].features
+        y = BNR()(x=move_feats, training=training)
+        logits = nn.Dense(self.inner_size)(y)
+        logits = BNR()(x=logits, training=training)
+        logits = nn.Dense(1)(logits).squeeze()
+        logits = logits[graphs.globals]
+
+        # 5. Value head
+        n_partitions = len(graphs.n_node)
+        segment_ids = jnp.repeat(
+            jnp.arange(n_partitions),
+            graphs.n_node,
+            axis=0,
+            total_repeat_length=x.shape[0]
+        )
+        v = nn.Dense(self.inner_size)(x)
+        v = nn.BatchNorm(momentum=0.9)(v, use_running_average=not training)
+        v = jax.nn.relu(v)
+        if self.attention_pooling:
+            v = AttentionPooling()(
+                x=v,
+                segment_ids=segment_ids,
+                num_segments=graphs.n_node.shape[0]
+            )
+        v = jax.nn.relu(v)
+        v = nn.Dense(1)(v)
+        v = nn.tanh(v)
+
+        return logits, v
 
 
 # AlphaGateau (deprecated)
@@ -430,12 +648,16 @@ class AZNet(nn.Module):
 
 state_to_graph = jax.jit(state_to_graph, static_argnames='use_embedding')
 new_state_to_graph = jax.jit(cg.state_to_graph)
+hetero_state_to_graph = jax.jit(cg.state_to_hetero_graph)
+
+
 class ModelManager(NamedTuple):
     id: str
     model: nn.Module
     use_embedding: bool = True
     use_graph: bool = True
     new_graph: bool = True
+    hetero_graph: bool = False
 
     def init(self, key: chex.PRNGKey, x):
         if self.use_graph:
@@ -508,6 +730,10 @@ class ModelManager(NamedTuple):
                 board = state._board
                 observation = state.observation
                 legal_action_mask = state.legal_action_mask
+            if self.hetero_graph:
+                return hetero_state_to_graph(
+                    observation, legal_action_mask,
+                )
             if self.new_graph:
                 return new_state_to_graph(
                     observation, legal_action_mask,
@@ -527,7 +753,9 @@ def load_model(
         dic = pickle.load(f)
         net = AZNet
         if dic['config']['use_gnn']:
-            if dic['config'].get('new_graph', False):
+            if dic['config'].get('hetero_graph', False):
+                net = HeteroEdgeNet
+            elif dic['config'].get('new_graph', False):
                 net = EdgeNet2
             else:
                 net = EdgeNet
@@ -549,6 +777,7 @@ def load_model(
             use_embedding=dic['config']['use_embedding'],
             use_graph=dic['config']['use_gnn'],
             new_graph=dic['config'].get('new_graph', False),
+            hetero_graph=dic['config'].get('hetero_graph', False),
         )
         model_params = {
             'params': dic['params'],

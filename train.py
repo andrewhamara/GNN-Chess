@@ -18,7 +18,7 @@ import optax
 import pgx
 import rich.progress as rp
 
-from models import ModelManager, AZNet, EdgeNet, EdgeNet2
+from models import ModelManager, AZNet, EdgeNet, EdgeNet2, HeteroEdgeNet
 import mcts
 from utils import elo_from_results, to_pgn, Sample
 from utils_progress import resume_task, ProgressEMA, TimeRemainingColumn
@@ -42,6 +42,7 @@ config = {
     'eval_batch_size': 32,
     'eval_interval': 2,
     'gardner': False,
+    'hetero_graph': False,
     'inner_size': 128,
     'learning_rate': 0.001,
     'max_num_steps': 256,
@@ -421,7 +422,9 @@ def main():
 
     run = None
     run_name = "EdgeNet" if config['use_gnn'] else "AZNet"
-    if config['use_gnn'] and config['new_graph']:
+    if config['use_gnn'] and config.get('hetero_graph', False):
+        run_name = "HeteroEdgeNet"
+    elif config['use_gnn'] and config['new_graph']:
         run_name += "2"
     if not debug:
         run = Run(
@@ -435,7 +438,19 @@ def main():
         run_name += " " + run.name
 
     if config['use_gnn']:
-        if config['new_graph']:
+        if config.get('hetero_graph', False):
+            model = HeteroEdgeNet(
+                n_actions=env.num_actions,
+                n_res_layers=config['n_gnn_layers'],
+                inner_size=config['inner_size'],
+                attention_pooling=config['attention_pooling'],
+                mix_edge_node=config['mix_edge_node'],
+                add_features=config['add_features'],
+                self_edges=config['self_edges'],
+                simple_update=config['simple_update'],
+                sync_updates=config['sync_updates'],
+            )
+        elif config['new_graph']:
             model = EdgeNet2(
                 n_actions=env.num_actions,
                 n_res_layers=config['n_gnn_layers'],
@@ -467,6 +482,7 @@ def main():
         use_embedding=config['use_embedding'],
         use_graph=config['use_gnn'],
         new_graph=config.get('new_graph', None),
+        hetero_graph=config.get('hetero_graph', False),
     )
 
     dummy_state = init_fn(jax.random.split(jax.random.PRNGKey(0), 2))
