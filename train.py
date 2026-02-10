@@ -485,14 +485,20 @@ def main():
         hetero_graph=config.get('hetero_graph', False),
     )
 
+    print("\n🔧 Initializing model...")
     dummy_state = init_fn(jax.random.split(jax.random.PRNGKey(0), 2))
+
+    print("   Building graph structure...")
     x = model.format_data(state=dummy_state)
 
+    print("   Initializing model parameters...")
     variables = model.init(jax.random.PRNGKey(0), x)
     params, batch_stats = variables['params'], variables['batch_stats']
     param_count = sum(x.size for x in jax.tree_util.tree_leaves(params))
     config['param_count'] = param_count
     config['baseline'] = baseline_name
+
+    print(f"   ✓ Model initialized with {param_count:,} parameters")
 
     if False: # Save the model architecture graph
         f = partial(model.__call__,
@@ -617,6 +623,10 @@ def main():
             resume_task(progress, task_gen)
             st = time.time()
 
+            if iteration == 0:
+                print("\n⏳ First iteration: JIT compiling (this may take 5-15 minutes)...")
+                print("   Compiling selfplay, MCTS, and graph construction...")
+
             rng_key, subkey = jax.random.split(rng_key)
             keys = jax.random.split(subkey, num_devices)
             data: mcts.PlyOutput = selfplay(
@@ -669,6 +679,9 @@ def main():
             # Training
             resume_task(progress, task_train)
             st = time.time()
+
+            if iteration == 0:
+                print("   Compiling training and gradient computation...")
 
             rng_key, subkey = jax.random.split(rng_key)
 
