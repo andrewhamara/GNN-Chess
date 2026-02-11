@@ -34,9 +34,9 @@ train.config['hetero_graph'] = True
 # - Adjust batch sizes if OOM occurs
 # - Monitor convergence carefully
 
-# Model architecture
-train.config['n_gnn_layers'] = 4  # Reduced from 5 (model is deeper per layer)
-train.config['inner_size'] = 128  # Keep same (or try 256 if memory allows)
+# Model architecture (reduced to avoid LLVM compilation issues)
+train.config['n_gnn_layers'] = 2  # Reduced to 2 for initial testing
+train.config['inner_size'] = 64   # Reduced to avoid compiler complexity
 
 # Training hyperparameters
 train.config['learning_rate'] = 0.001  # Keep same initially
@@ -62,6 +62,20 @@ train.config['shuffle_window'] = True
 
 # Disable Aim experiment tracking (if Aim server not running)
 train.config['debug'] = True  # Skip Aim logging
+
+# Fix LLVM mma16816 error by disabling tensor cores and forcing float32
+# This is a workaround for an LLVM compiler bug with complex models
+import os
+os.environ['XLA_FLAGS'] = (
+    os.environ.get('XLA_FLAGS', '') +
+    ' --xla_gpu_enable_triton_gemm=false'
+    ' --xla_gpu_triton_gemm_any=false'
+    ' --xla_gpu_force_compilation_parallelism=1'
+)
+
+# Force float32 (disable bfloat16/float16 which may trigger mma16816)
+import jax
+jax.config.update('jax_default_matmul_precision', 'float32')
 
 # Uncomment to enable JAX profiling
 # import jax
