@@ -13,11 +13,10 @@ def build_default_agents(
     leela_path: str = "lc0",
     gnn_base_checkpoint: str = "./models/base/checkpoint.ckpt",
     gnn_large_checkpoint: str = "./models/large/checkpoint.ckpt",
-    edgenet_checkpoint: str = "./models/chess_2024-02-05:14h08/000050.ckpt",
-    edgenet2_checkpoint: str = "./models/chess_2024-08-20:00h13/000499.ckpt",
+    edgenet_checkpoint: str = "./models/chess_2024-08-20:00h13/000499.ckpt",
     n_sim: int = 128,
 ) -> list:
-    """Build the default set of 10 agents for the tournament."""
+    """Build the default set of 9 agents for the tournament."""
     return [
         # Heterogeneous GNN models
         AgentConfig(
@@ -36,20 +35,12 @@ def build_default_agents(
                 "n_sim": n_sim,
             },
         ),
-        # Homogeneous GNN models (auto-detected from checkpoint config)
+        # Homogeneous GNN baseline
         AgentConfig(
             name="EdgeNet",
             agent_type="gnn",
             params={
                 "checkpoint_path": edgenet_checkpoint,
-                "n_sim": n_sim,
-            },
-        ),
-        AgentConfig(
-            name="EdgeNet2",
-            agent_type="gnn",
-            params={
-                "checkpoint_path": edgenet2_checkpoint,
                 "n_sim": n_sim,
             },
         ),
@@ -175,14 +166,8 @@ def main():
     parser.add_argument(
         "--edgenet-checkpoint",
         type=str,
-        default="./models/chess_2024-02-05:14h08/000050.ckpt",
-        help="Path to EdgeNet (original homogeneous GNN) checkpoint",
-    )
-    parser.add_argument(
-        "--edgenet2-checkpoint",
-        type=str,
         default="./models/chess_2024-08-20:00h13/000499.ckpt",
-        help="Path to EdgeNet2 (improved homogeneous GNN) checkpoint",
+        help="Path to EdgeNet (homogeneous GNN) checkpoint",
     )
     parser.add_argument(
         "--seed",
@@ -203,7 +188,6 @@ def main():
             gnn_base_checkpoint=args.gnn_base_checkpoint,
             gnn_large_checkpoint=args.gnn_large_checkpoint,
             edgenet_checkpoint=args.edgenet_checkpoint,
-            edgenet2_checkpoint=args.edgenet2_checkpoint,
             n_sim=args.n_sim,
         )
 

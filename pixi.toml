@@ -26,6 +26,10 @@ version = "0.1.0"
     XLA_PYTHON_CLIENT_ALLOCATOR = "platform"
 [tasks.book]
     cmd = "python book.py"
+[tasks.play]
+    cmd = "python play_vs_model.py"
+    [tasks.play.env]
+    XLA_PYTHON_CLIENT_ALLOCATOR = "platform"
 [tasks.tournament]
     cmd = "python run_tournament.py"
     [tasks.tournament.env]
