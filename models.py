@@ -760,21 +760,23 @@ def load_model(
                 net = EdgeNet2
             else:
                 net = EdgeNet
+        net_kwargs = dict(
+            n_actions=env.num_actions,
+            inner_size=dic['config']['inner_size'],
+            n_res_layers=dic['config'].get('n_gnn_layers', 5),
+            attention_pooling=dic['config'].get('attention_pooling', True),
+            mix_edge_node=dic['config'].get('mix_edge_node', False),
+            add_features=dic['config'].get('add_features', True),
+            self_edges=dic['config'].get('self_edges', False),
+            simple_update=dic['config'].get('simple_update', True),
+            sync_updates=dic['config'].get('sync_updates', None),
+        )
+        if net is not HeteroEdgeNet:
+            net_kwargs['dot_v2'] = dic['config'].get('dotv2', True)
+            net_kwargs['use_embedding'] = dic['config']['use_embedding']
         model = ModelManager(
             id=model_name,
-            model=net(
-                n_actions=env.num_actions,
-                inner_size=dic['config']['inner_size'],
-                n_res_layers=dic['config'].get('n_gnn_layers', 5),
-                dot_v2=dic['config'].get('dotv2', True),
-                use_embedding=dic['config']['use_embedding'],
-                attention_pooling=dic['config'].get('attention_pooling', True),
-                mix_edge_node=dic['config'].get('mix_edge_node', False),
-                add_features=dic['config'].get('add_features', True),
-                self_edges=dic['config'].get('self_edges', False),
-                simple_update=dic['config'].get('simple_update', True),
-                sync_updates=dic['config'].get('sync_updates', None),
-            ),
+            model=net(**net_kwargs),
             use_embedding=dic['config']['use_embedding'],
             use_graph=dic['config']['use_gnn'],
             new_graph=dic['config'].get('new_graph', False),
