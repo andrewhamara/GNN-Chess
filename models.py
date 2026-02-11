@@ -51,7 +51,6 @@ class BNR(nn.Module):
         training: bool=False,
         **kwargs
     ):
-        training=False
         x = nn.BatchNorm(momentum=self.momentum)(x, use_running_average=not training)
         x = jax.nn.relu(x)
         return x

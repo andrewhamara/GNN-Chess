@@ -304,7 +304,7 @@ def _vision_edges(
     to_black = is_black[to_sq]
     same_side = (from_white & to_white) | (from_black & to_black)
 
-    is_attack = can_see & (~to_occupied | ~same_side)
+    is_attack = can_see & to_occupied & ~same_side
     is_defense = can_see & to_occupied & same_side
 
     # Build features: (df, dr, is_valid, is_my_piece, 12x one-hot piece type)
@@ -330,8 +330,8 @@ def _vision_edges(
         feats = jnp.concatenate([feats, piece_onehot], axis=-1)  # (N*N, 16)
         # Zero out features for invalid edges
         feats = feats * valid[:, None]
-        senders = jnp.where(mask, from_sq + offset_id, 0).astype(jnp.int32)
-        receivers = jnp.where(mask, to_sq + offset_id, 0).astype(jnp.int32)
+        senders = (from_sq + offset_id).astype(jnp.int32)
+        receivers = jnp.where(mask, to_sq + offset_id, from_sq + offset_id).astype(jnp.int32)
         return EdgeSet(
             senders=senders,
             receivers=receivers,
@@ -402,7 +402,7 @@ def _state_edges( # TODO: add self-edge
                   (all_moves.from_ % size == size-2)
                 & (all_moves.to % size == size-1)
                 & (jnp.abs(all_moves.to // size - all_moves.from_ // size) <= 1)
-                & (all_moves.underpromotion == 0)
+                & (all_moves.underpromotion < 0)
             ), # queen
             all_moves.underpromotion == 0, # rook
             all_moves.underpromotion == 1, # bishop
