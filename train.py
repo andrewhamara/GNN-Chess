@@ -337,6 +337,8 @@ def training(
         // num_devices
         // batch_size
     )
+    # Truncate to an even multiple so the reshape is exact
+    usable = num_updates * num_devices * batch_size
 
     policy_losses = []
     value_losses = []
@@ -349,7 +351,7 @@ def training(
         ))
         sample_window = jax.tree.map(lambda x: x[ixs], sample_window) # shuffle
         minibatches = jax.tree.map(
-            lambda x: x.reshape(
+            lambda x: x[:usable].reshape(
                 (
                     num_updates,
                     num_devices,
