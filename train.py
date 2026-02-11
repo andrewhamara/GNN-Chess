@@ -808,7 +808,6 @@ def main():
                     last_line[6] = f"{lose_rate:.6f}"
                     last_line[7] = f"{avg_R:.6f}"
                     last_line[8] = f"{elo:.2f}"
-                    last_line[12] = f"{hours['eval']:.4f}"
                     lines[-1] = ','.join(last_line) + '\n'
                     with open(log_file, 'w') as f:
                         f.writelines(lines)
