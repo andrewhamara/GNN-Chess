@@ -531,6 +531,12 @@ def main():
     games_dir = os.path.join("games", f"{env_id}_{now}")
     os.makedirs(games_dir, exist_ok=True)
 
+    # Create CSV log file (always enabled, even when Aim is disabled)
+    log_file = os.path.join(models_dir, "training_log.csv")
+    with open(log_file, 'w') as f:
+        f.write("iteration,loss,policy_loss,value_loss,max_grad,win_rate,draw_rate,lose_rate,avg_R,elo_rating,selfplay_time,train_time,eval_time\n")
+    print(f"📊 Logging to: {log_file}")
+
     rng_key = jax.random.PRNGKey(42)
     if False:
         pre_train_it = 99
@@ -734,6 +740,10 @@ def main():
             )
             progress.stop_task(task_train)
 
+            # Log to CSV (every iteration)
+            with open(log_file, 'a') as f:
+                f.write(f"{iteration},{loss:.6f},{policy_loss:.6f},{value_loss:.6f},{max_grad.max().item():.6f},,,,,{hours['selfplay']:.4f},{hours['train']:.4f},\n")
+
             st = time.time()
             if iteration % config['eval_interval'] == config['eval_interval']-1:
                 resume_task(progress, task_eval)
@@ -782,6 +792,24 @@ def main():
                     )
                 )
                 progress.stop_task(task_eval)
+
+                # Update CSV with eval metrics
+                elo = elo_from_results(avg_R, base=1000, max_delta=1000)
+                # Read last line, update it with eval metrics
+                with open(log_file, 'r') as f:
+                    lines = f.readlines()
+                if lines:
+                    last_line = lines[-1].strip().split(',')
+                    # Update eval columns (indices 4-8)
+                    last_line[4] = f"{win_rate:.6f}"
+                    last_line[5] = f"{draw_rate:.6f}"
+                    last_line[6] = f"{lose_rate:.6f}"
+                    last_line[7] = f"{avg_R:.6f}"
+                    last_line[8] = f"{elo:.2f}"
+                    last_line[12] = f"{hours['eval']:.4f}"
+                    lines[-1] = ','.join(last_line) + '\n'
+                    with open(log_file, 'w') as f:
+                        f.writelines(lines)
 
                 # Store checkpoints
                 params_0, batch_stats_0, opt_state_0 = jax.tree_util.tree_map(
