@@ -43,10 +43,10 @@ train.config['hetero_graph'] = True
 train.config['n_gnn_layers'] = 5
 train.config['inner_size'] = 128
 
-# Training hyperparameters (halved batch sizes to avoid OOM with ~10x params)
-train.config['learning_rate'] = 0.001
-train.config['training_batch_size'] = 2**6  # 64 (down from 128)
-train.config['selfplay_batch_size'] = 128   # (down from 256)
+# Training hyperparameters
+train.config['learning_rate'] = 0.0003  # Lower than small model (more params, deeper)
+train.config['training_batch_size'] = 2**7  # 128 — reduce to 2**6 if OOM
+train.config['selfplay_batch_size'] = 256   # Reduce to 128 if OOM
 
 # MCTS settings
 train.config['num_simulations'] = 128
