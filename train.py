@@ -426,6 +426,14 @@ def evaluate(
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--checkpoint', type=str, default=None,
+                        help='Checkpoint directory to resume training from')
+    parser.add_argument('--n-iterations', type=int, default=None,
+                        help='Number of additional iterations to train')
+    args, _ = parser.parse_known_args()
+
     debug = config.get('debug', False)  # Allow override via config
 
     run = None
@@ -527,80 +535,67 @@ def main():
         import sys
         sys.exit()
 
-    now = time.strftime("%Y-%m-%d:%Hh%M")
-    models_dir = os.path.join("models", f"{env_id}_{now}")
+    # ------------------------------------------------------------------
+    # Resume from checkpoint or start fresh
+    # ------------------------------------------------------------------
+    start_iteration = 0
+    frames = 0
+    hours = {'eval': 0.0, 'selfplay': 0.0, 'train': 0.0}
+    rng_key = jax.random.PRNGKey(42)
+    opt_state0 = None
+
+    if args.checkpoint:
+        ckpt_files = sorted(
+            f for f in os.listdir(args.checkpoint) if f.endswith('.ckpt')
+        )
+        if not ckpt_files:
+            raise FileNotFoundError(
+                f"No .ckpt files found in {args.checkpoint}"
+            )
+        latest_ckpt = os.path.join(args.checkpoint, ckpt_files[-1])
+        print(f"\n📂 Resuming from checkpoint: {latest_ckpt}")
+        with open(latest_ckpt, "rb") as f:
+            dic = pickle.load(f)
+        params = dic['params']
+        batch_stats = dic['batch_stats']
+        opt_state0 = dic['opt_state']
+        rng_key = dic['rng_key']
+        start_iteration = dic['iteration'] + 1
+        frames = dic.get('frames', 0)
+        hours = dic.get('hours', hours)
+        print(f"   Resuming at iteration {start_iteration} ({frames} frames)")
+
+    if args.n_iterations is not None:
+        config['n_iter'] = start_iteration + args.n_iterations
+
+    # Directory setup
+    if args.checkpoint:
+        models_dir = args.checkpoint
+        games_dir = os.path.join("games", os.path.basename(args.checkpoint))
+    else:
+        now = time.strftime("%Y-%m-%d:%Hh%M")
+        models_dir = os.path.join("models", f"{env_id}_{now}")
+        games_dir = os.path.join("games", f"{env_id}_{now}")
     os.makedirs(models_dir, exist_ok=True)
-    games_dir = os.path.join("games", f"{env_id}_{now}")
     os.makedirs(games_dir, exist_ok=True)
 
-    # Create CSV log file (always enabled, even when Aim is disabled)
+    # CSV log (append if resuming, create if new)
     log_file = os.path.join(models_dir, "training_log.csv")
-    with open(log_file, 'w') as f:
-        f.write("iteration,loss,policy_loss,value_loss,max_grad,win_rate,draw_rate,lose_rate,avg_R,elo_rating,selfplay_time,train_time,eval_time\n")
+    if not os.path.exists(log_file):
+        with open(log_file, 'w') as f:
+            f.write("iteration,loss,policy_loss,value_loss,max_grad,win_rate,draw_rate,lose_rate,avg_R,elo_rating,selfplay_time,train_time,eval_time\n")
     print(f"📊 Logging to: {log_file}")
-
-    rng_key = jax.random.PRNGKey(42)
-    if False:
-        pre_train_it = 99
-        pre_train_name = f"gardner_chess_2024-10-09:15h32/{pre_train_it:06}"
-        config['continue'] = pre_train_name
-        with open(f"./models/{pre_train_name}.ckpt", "rb") as f:
-            dic = pickle.load(f)
-            params, batch_stats = dic['params'], dic['batch_stats']
 
     if run is not None:
         run["hparams"] = config
 
-    opt_state0 = optimizer.init(params=params)
+    if opt_state0 is None:
+        opt_state0 = optimizer.init(params=params)
     params, batch_stats, opt_state = jax.device_put_replicated(
         (params, batch_stats, opt_state0),
         devices
     )
 
-    if 'continue' in config:
-        if run is not None:
-            # Evaluation
-            rng_key, subkey = jax.random.split(rng_key)
-            R, avg_R, win_rate, draw_rate, lose_rate = evaluate(
-                subkey,
-                model,
-                {'params': params, 'batch_stats': batch_stats},
-                n_games=config['eval_batch_size'],
-                max_plies=config['max_num_steps'],
-                n_sim=config['num_simulations'],
-                save_n_games=config['eval_batch_size'],
-                games_file=os.path.join(
-                    games_dir,
-                    f'init.pgn'
-                ),
-                round_name='init'
-            )
-            run.track(
-                {
-                    "elo_rating": elo_from_results(
-                        avg_R,
-                        base=1000,
-                        max_delta=1000
-                    ),
-                    "avg_R": avg_R,
-                    "win_rate": win_rate,
-                    "draw_rate": draw_rate,
-                    "lose_rate": lose_rate,
-                },
-                context={
-                    'subset': 'eval',
-                    'tag': 'eval/vs_baseline',
-                },
-                step=-1,
-                epoch=-1
-            )
-
-    frames = 0
-    hours = {
-        'eval': 0.0,
-        'selfplay': 0.0,
-        'train': 0.0,
-    }
     sample_window = None
 
     with rp.Progress(
@@ -613,31 +608,32 @@ def main():
         rp.TextColumn("{task.fields[logs]}"),
         refresh_per_second=1
     ) as progress:
+        remaining = config['n_iter'] - start_iteration
         task_gen = progress.add_task(
             "[cyan]Generating",
-            total=config['n_iter'],
+            total=remaining,
             logs='...',
             start=False
         )
         task_train = progress.add_task(
             "[red]Training",
-            total=config['n_iter'],
+            total=remaining,
             logs='...',
             start=False
         )
         task_eval = progress.add_task(
             "[green]Evaluating",
-            total=(config['n_iter'] + config['eval_interval'] - 1)
+            total=(remaining + config['eval_interval'] - 1)
                 // config['eval_interval'],
             logs='...',
             start=False
         )
-        for iteration in range(config['n_iter']):
+        for iteration in range(start_iteration, config['n_iter']):
             # Selfplay
             resume_task(progress, task_gen)
             st = time.time()
 
-            if iteration == 0:
+            if iteration == start_iteration:
                 print("\n⏳ First iteration: JIT compiling (this may take 5-15 minutes)...")
                 print("   Compiling selfplay, MCTS, and graph construction...")
 
@@ -694,7 +690,7 @@ def main():
             resume_task(progress, task_train)
             st = time.time()
 
-            if iteration == 0:
+            if iteration == start_iteration:
                 print("   Compiling training and gradient computation...")
 
             rng_key, subkey = jax.random.split(rng_key)
