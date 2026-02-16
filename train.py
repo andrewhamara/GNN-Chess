@@ -432,6 +432,8 @@ def main():
                         help='Checkpoint directory to resume training from')
     parser.add_argument('--n-iterations', type=int, default=None,
                         help='Number of additional iterations to train')
+    parser.add_argument('--output-dir', type=str, default=None,
+                        help='Save new checkpoints here instead of the checkpoint directory')
     args, _ = parser.parse_known_args()
 
     debug = config.get('debug', False)  # Allow override via config
@@ -569,7 +571,10 @@ def main():
         config['n_iter'] = start_iteration + args.n_iterations
 
     # Directory setup
-    if args.checkpoint:
+    if args.output_dir:
+        models_dir = args.output_dir
+        games_dir = os.path.join("games", os.path.basename(args.output_dir))
+    elif args.checkpoint:
         models_dir = args.checkpoint
         games_dir = os.path.join("games", os.path.basename(args.checkpoint))
     else:
