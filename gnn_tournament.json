@@ -1,0 +1,14 @@
+{
+  "agents": [
+    {
+      "name": "HeteroEdgeNet-100iter",
+      "agent_type": "gnn",
+      "params": {"checkpoint_path": "./models/REPLACE_WITH_DIR/000099.ckpt", "n_sim": 128}
+    },
+    {
+      "name": "HeteroEdgeNet-500iter",
+      "agent_type": "gnn",
+      "params": {"checkpoint_path": "./models/REPLACE_WITH_DIR/000499.ckpt", "n_sim": 128}
+    }
+  ]
+}
