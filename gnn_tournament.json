@@ -1,14 +1,14 @@
 {
   "agents": [
     {
-      "name": "HeteroEdgeNet-100iter",
+      "name": "AlphaGateau-500",
       "agent_type": "gnn",
-      "params": {"checkpoint_path": "./models/REPLACE_WITH_DIR/000099.ckpt", "n_sim": 128}
+      "params": {"checkpoint_path": "./models/chess_2024-08-20:00h13/000499.ckpt", "n_sim": 128}
     },
     {
-      "name": "HeteroEdgeNet-500iter",
+      "name": "HeteroEdgeNet",
       "agent_type": "gnn",
-      "params": {"checkpoint_path": "./models/REPLACE_WITH_DIR/000499.ckpt", "n_sim": 128}
+      "params": {"checkpoint_path": "./models/HETERO_DIR/000099.ckpt", "n_sim": 128}
     }
   ]
 }
