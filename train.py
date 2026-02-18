@@ -570,17 +570,15 @@ def main():
     if args.n_iterations is not None:
         config['n_iter'] = start_iteration + args.n_iterations
 
-    # Directory setup
+    # Directory setup — everything goes under models_dir
     if args.output_dir:
         models_dir = args.output_dir
-        games_dir = os.path.join("games", os.path.basename(args.output_dir))
     elif args.checkpoint:
         models_dir = args.checkpoint
-        games_dir = os.path.join("games", os.path.basename(args.checkpoint))
     else:
         now = time.strftime("%Y-%m-%d:%Hh%M")
         models_dir = os.path.join("models", f"{env_id}_{now}")
-        games_dir = os.path.join("games", f"{env_id}_{now}")
+    games_dir = os.path.join(models_dir, "games")
     os.makedirs(models_dir, exist_ok=True)
     os.makedirs(games_dir, exist_ok=True)
 

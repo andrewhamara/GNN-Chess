@@ -25,6 +25,8 @@ os.environ['XLA_FLAGS'] = (
     ' --xla_gpu_enable_triton_gemm=false'
     ' --xla_gpu_triton_gemm_any=false'
     ' --xla_gpu_force_compilation_parallelism=1'
+    ' --xla_gpu_autotune_level=0'
+    ' --xla_gpu_enable_custom_fusions=false'
 )
 
 import jax
