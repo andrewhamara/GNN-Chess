@@ -114,7 +114,7 @@ class GNNAgent(Agent):
             lambda x: jnp.expand_dims(x, 0), self._pgx_state
         )
 
-        logits, value = self.model(
+        logits, value, *_ = self.model(
             self.model.format_data(state=state_batch),
             legal_action_mask=state_batch.legal_action_mask,
             params=self.model_params,

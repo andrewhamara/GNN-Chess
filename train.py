@@ -178,7 +178,7 @@ else:
 init_fn = jax.jit(jax.vmap(env.init))
 step_fn = jax.jit(jax.vmap(env.step))
 
-optimizer = optax.adam(learning_rate=config['learning_rate'])
+optimizer = None  # Created in main() after config is finalized
 
 
 @partial(jax.pmap, static_broadcasted_argnums=[1, 3, 4, 5, 6])
@@ -234,6 +234,12 @@ def compute_loss_input(data: mcts.PlyOutput) -> Sample:
     )
     value_tgt = value_tgt[::-1, :]
 
+    # Convert scalar value targets to soft WDL probabilities
+    w = jnp.maximum(value_tgt, 0.0)
+    l = jnp.maximum(-value_tgt, 0.0)
+    d = 1.0 - w - l
+    wdl_tgt = jnp.stack([w, d, l], axis=-1)
+
     return Sample(
         # board_or_obs=data.board if config['use_embedding'] and config['use_gnn'] else data.obs,
         board=data.board,
@@ -243,6 +249,7 @@ def compute_loss_input(data: mcts.PlyOutput) -> Sample:
         lam=data.lam,
         policy_tgt=data.action_weights,
         value_tgt=value_tgt,
+        wdl_tgt=wdl_tgt,
         mask=value_mask,
     )
 
@@ -263,28 +270,51 @@ def loss_fn(
             legal_action_mask=samples.lam
         )
     )
-    (logits, value), batch_stats = model(
-        graph,
-        legal_action_mask=samples.lam,
-        params={'params': params, 'batch_stats': batch_stats},
-        training=True
-    )
 
-    policy_loss = optax.softmax_cross_entropy(logits, samples.policy_tgt)
-    policy_loss = jnp.mean(policy_loss)
+    if model.hetero_graph:
+        # HeteroEdgeNet: LayerNorm (no batch_stats), WDL value head
+        logits, value, wdl_logits = model(
+            graph,
+            legal_action_mask=samples.lam,
+            params={'params': params},
+        )
 
-    policy_loss_norm = optax.kl_divergence(
-        jnp.log(jax.nn.softmax(logits)+1e-40),
-        samples.policy_tgt
-    )
-    policy_loss_norm = jnp.mean(policy_loss_norm)
+        policy_loss = optax.softmax_cross_entropy(logits, samples.policy_tgt)
+        policy_loss = jnp.mean(policy_loss)
 
-    value_loss = optax.l2_loss(value, samples.value_tgt)
-    # mask if the episode is truncated
-    value_loss = jnp.mean(value_loss * samples.mask)
-    # value_loss = jnp.sqrt(value_loss)
+        policy_loss_norm = optax.kl_divergence(
+            jnp.log(jax.nn.softmax(logits) + 1e-40),
+            samples.policy_tgt
+        )
+        policy_loss_norm = jnp.mean(policy_loss_norm)
 
-    return policy_loss + value_loss, (batch_stats, policy_loss_norm, value_loss)
+        # WDL cross-entropy loss (masked for truncated episodes)
+        value_loss = optax.softmax_cross_entropy(wdl_logits, samples.wdl_tgt)
+        value_loss = jnp.mean(value_loss * samples.mask)
+
+        return policy_loss + value_loss, (batch_stats, policy_loss_norm, value_loss)
+    else:
+        # Legacy models with BatchNorm
+        (logits, value), batch_stats = model(
+            graph,
+            legal_action_mask=samples.lam,
+            params={'params': params, 'batch_stats': batch_stats},
+            training=True
+        )
+
+        policy_loss = optax.softmax_cross_entropy(logits, samples.policy_tgt)
+        policy_loss = jnp.mean(policy_loss)
+
+        policy_loss_norm = optax.kl_divergence(
+            jnp.log(jax.nn.softmax(logits) + 1e-40),
+            samples.policy_tgt
+        )
+        policy_loss_norm = jnp.mean(policy_loss_norm)
+
+        value_loss = optax.l2_loss(value, samples.value_tgt)
+        value_loss = jnp.mean(value_loss * samples.mask)
+
+        return policy_loss + value_loss, (batch_stats, policy_loss_norm, value_loss)
 
 
 @partial(jax.pmap, axis_name="i", static_broadcasted_argnums=[4])
@@ -461,6 +491,7 @@ def main():
                 n_actions=env.num_actions,
                 n_res_layers=config['n_gnn_layers'],
                 inner_size=config['inner_size'],
+                n_heads=config.get('n_heads', 2),
                 attention_pooling=config['attention_pooling'],
                 mix_edge_node=config['mix_edge_node'],
                 add_features=config['add_features'],
@@ -511,31 +542,13 @@ def main():
 
     print("   Initializing model parameters...")
     variables = model.init(jax.random.PRNGKey(0), x)
-    params, batch_stats = variables['params'], variables['batch_stats']
+    params = variables['params']
+    batch_stats = variables.get('batch_stats', {})
     param_count = sum(x.size for x in jax.tree_util.tree_leaves(params))
     config['param_count'] = param_count
     config['baseline'] = baseline_name
 
     print(f"   ✓ Model initialized with {param_count:,} parameters")
-
-    if False: # Save the model architecture graph
-        f = partial(model.__call__,
-            legal_action_mask=dummy_state.legal_action_mask,
-            params={'params': params, 'batch_stats': batch_stats},
-            training=False
-        )
-        z=jax.xla_computation(f)(x)
-
-        with open("t1.dot", "w") as ff:
-            ff.write(z.as_hlo_dot_graph())
-
-        from jax._src import api
-        model_graph = api.jit(f).lower(x).compiler_ir(dialect="hlo").as_hlo_dot_graph()
-
-        with open("t2.dot", "w") as f:
-            f.write(model_graph)
-        import sys
-        sys.exit()
 
     # ------------------------------------------------------------------
     # Resume from checkpoint or start fresh
@@ -559,7 +572,7 @@ def main():
         with open(latest_ckpt, "rb") as f:
             dic = pickle.load(f)
         params = dic['params']
-        batch_stats = dic['batch_stats']
+        batch_stats = dic.get('batch_stats', {})
         opt_state0 = dic['opt_state']
         rng_key = dic['rng_key']
         start_iteration = dic['iteration'] + 1
@@ -569,6 +582,38 @@ def main():
 
     if args.n_iterations is not None:
         config['n_iter'] = start_iteration + args.n_iterations
+
+    # Create optimizer (after config is finalized and n_iter is known)
+    global optimizer
+    updates_per_iter = max(1,
+        config['window_size'] // (num_devices * config['training_batch_size'])
+    )
+    total_steps = config['n_iter'] * config['n_training_pass'] * updates_per_iter
+    warmup_steps = max(1, total_steps // 20)  # 5% warmup
+    lr = config['learning_rate']
+    schedule = optax.join_schedules(
+        schedules=[
+            optax.linear_schedule(
+                init_value=0.0, end_value=lr, transition_steps=warmup_steps
+            ),
+            optax.cosine_decay_schedule(
+                init_value=lr,
+                decay_steps=total_steps - warmup_steps,
+                alpha=0.01,
+            ),
+        ],
+        boundaries=[warmup_steps]
+    )
+    optimizer = optax.chain(
+        optax.clip_by_global_norm(config.get('grad_clip', 1.0)),
+        optax.adamw(
+            learning_rate=schedule,
+            weight_decay=config.get('weight_decay', 1e-4),
+        ),
+    )
+    print(f"   ✓ Optimizer: adamw + grad_clip={config.get('grad_clip', 1.0)}"
+          f" + weight_decay={config.get('weight_decay', 1e-4)}")
+    print(f"   ✓ LR schedule: warmup {warmup_steps} steps, cosine decay over {total_steps} total steps")
 
     # Directory setup — everything goes under models_dir
     if args.output_dir:

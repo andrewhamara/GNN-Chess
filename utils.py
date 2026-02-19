@@ -201,4 +201,5 @@ class Sample(NamedTuple):
     lam: jnp.ndarray
     policy_tgt: jnp.ndarray
     value_tgt: jnp.ndarray
+    wdl_tgt: jnp.ndarray    # (W, D, L) soft labels from value_tgt
     mask: jnp.ndarray

@@ -26,7 +26,7 @@ def recurrent_fn(
     current_player = state.current_player
     state = jax.vmap(env.step)(state, action)
 
-    logits, value = model(
+    logits, value, *_ = model(
         model.format_data(state=state),
         legal_action_mask=state.legal_action_mask,
         params=params
@@ -60,7 +60,7 @@ def play_ply(
     state0, R = val
     batch_size = state0.observation.shape[0]
 
-    logits, value = model(
+    logits, value, *_ = model(
         model.format_data(state=state0),
         legal_action_mask=state0.legal_action_mask,
         params=params
@@ -110,7 +110,7 @@ def play_ply_datagen(
     batch_size = state.observation.shape[0]
     key1, key2 = jax.random.split(key)
 
-    logits, value = model(
+    logits, value, *_ = model(
         model.format_data(state=state),
         legal_action_mask=state.legal_action_mask,
         params=params

@@ -49,6 +49,9 @@ train.config['inner_size'] = 128
 train.config['learning_rate'] = 0.0003  # Lower than small model (more params, deeper)
 train.config['training_batch_size'] = 2**7  # 128 — reduce to 2**6 if OOM
 train.config['selfplay_batch_size'] = 256   # Reduce to 128 if OOM
+train.config['grad_clip'] = 1.0         # Global norm gradient clipping
+train.config['weight_decay'] = 1e-4     # AdamW weight decay (AlphaZero uses 1e-4)
+train.config['n_heads'] = 2             # Multi-head attention in GATEAU
 
 # MCTS settings
 train.config['num_simulations'] = 128

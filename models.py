@@ -1,5 +1,5 @@
 import pickle
-from typing import cast, overload, Literal, Mapping, NamedTuple, Optional, Tuple, Union
+from typing import cast, Literal, Mapping, NamedTuple, Optional, Tuple, Union
 from functools import partial
 
 from pgx import Env
@@ -56,8 +56,18 @@ class BNR(nn.Module):
         return x
 
 
+class LNR(nn.Module):
+    """LayerNorm + ReLU. No training/eval distinction (replaces BNR for HeteroEdgeNet)."""
+    @nn.compact
+    def __call__(self, *args, x, **kwargs):
+        x = nn.LayerNorm()(x)
+        x = jax.nn.relu(x)
+        return x
+
+
 class GATEAU(nn.Module):
     out_dim: int = 128
+    n_heads: int = 1
     mix_edge_node: bool = False
     add_features: bool = True
     self_edges: bool = False
@@ -79,6 +89,9 @@ class GATEAU(nn.Module):
             sync_updates = not self.simple_update
         else:
             sync_updates = self.sync_updates
+
+        n_heads = self.n_heads
+        head_dim = self.out_dim // n_heads
 
         node_features = cast(jnp.ndarray, graph.nodes)
         edge_features = cast(jnp.ndarray, graph.edges)
@@ -110,13 +123,14 @@ class GATEAU(nn.Module):
                 * received_attributes
             )
 
-        attention_coeffs = nn.Dense(1)(edge_features)
+        # Multi-head attention: Dense(n_heads) produces one scalar per head
+        attention_coeffs = nn.Dense(n_heads)(edge_features)  # (E, H)
         attention_coeffs = nn.leaky_relu(attention_coeffs)
         attention_weights = jraph.segment_softmax(
             attention_coeffs,
             segment_ids=cast(jnp.ndarray, graph.receivers),
             num_segments=sum_n_node
-        )
+        )  # (E, H)
 
         if self.mix_edge_node:
             if self.add_features:
@@ -131,7 +145,13 @@ class GATEAU(nn.Module):
             message = sent_attributes_2
         if self.simple_update:
             message = nn.Dense(self.out_dim)(message)
-        message = attention_weights * message
+
+        # Per-head weighting and aggregation
+        message = message.reshape(-1, n_heads, head_dim)          # (E, H, D)
+        attention_weights = attention_weights[..., jnp.newaxis]    # (E, H, 1)
+        message = attention_weights * message                      # (E, H, D)
+        message = message.reshape(-1, self.out_dim)                # (E, out_dim)
+
         node_features = jraph.segment_sum(
             message,
             segment_ids=cast(jnp.ndarray, graph.receivers),
@@ -203,8 +223,9 @@ _EDGE_TYPE_NAMES = (
 
 
 class HeteroGATEAU(nn.Module):
-    """Run separate GATEAU per edge type, sum node updates."""
+    """Run separate GATEAU per edge type with learned gating."""
     out_dim: int = 128
+    n_heads: int = 1
     mix_edge_node: bool = False
     add_features: bool = True
     self_edges: bool = False
@@ -217,40 +238,40 @@ class HeteroGATEAU(nn.Module):
         *args,
         nodes: jnp.ndarray,
         edge_sets: Tuple[EdgeSet, ...],
-        training: bool = False,
         **kwargs
     ) -> Tuple[jnp.ndarray, Tuple[EdgeSet, ...]]:
         """
         Args:
             nodes: (total_nodes, dim) — shared node features
             edge_sets: tuple of 7 EdgeSets (one per edge type)
-            training: batch norm mode
         Returns:
             (new_nodes, new_edge_sets)
         """
         sum_n_node = nodes.shape[0]
-        # Shared BNR on nodes (applied once, not per edge type)
-        bnr_nodes = BNR()(x=nodes, training=training)
+        n_types = len(edge_sets)
+        # Shared LNR on nodes (applied once, not per edge type)
+        lnr_nodes = LNR()(x=nodes)
 
-        node_updates = jnp.zeros_like(bnr_nodes)
+        per_type_updates = []
         new_edge_sets = []
 
         for i, es in enumerate(edge_sets):
-            # Per-edge-type BNR on edge features
-            bnr_ef = BNR(name=f"bnr_edge_{i}")(x=es.features, training=training)
+            # Per-edge-type LNR on edge features
+            lnr_ef = LNR(name=f"lnr_edge_{i}")(x=es.features)
 
             # Build a temporary GraphsTuple for GATEAU
             tmp_graph = jraph.GraphsTuple(
                 n_node=jnp.array([sum_n_node]),
-                nodes=bnr_nodes,
+                nodes=lnr_nodes,
                 n_edge=jnp.array([es.senders.shape[0]]),
-                edges=bnr_ef,
+                edges=lnr_ef,
                 senders=es.senders,
                 receivers=es.receivers,
                 globals=None,
             )
             out_graph = GATEAU(
                 out_dim=self.out_dim,
+                n_heads=self.n_heads,
                 mix_edge_node=self.mix_edge_node,
                 add_features=self.add_features,
                 self_edges=self.self_edges,
@@ -259,12 +280,19 @@ class HeteroGATEAU(nn.Module):
                 name=f"gateau_{i}",
             )(graph=tmp_graph)
 
-            node_updates = node_updates + cast(jnp.ndarray, out_graph.nodes)
+            per_type_updates.append(cast(jnp.ndarray, out_graph.nodes))
             new_edge_sets.append(EdgeSet(
                 senders=es.senders,
                 receivers=es.receivers,
                 features=cast(jnp.ndarray, out_graph.edges),
             ))
+
+        # Learned edge-type gating: softmax gates from node features
+        # Gate bias initialized to zeros → starts as uniform weighting
+        stacked = jnp.stack(per_type_updates, axis=0)  # (T, N, dim)
+        gates = nn.Dense(n_types)(lnr_nodes)            # (N, T)
+        gates = jax.nn.softmax(gates, axis=-1)           # (N, T)
+        node_updates = jnp.einsum('tnf,nt->nf', stacked, gates)
 
         return node_updates, tuple(new_edge_sets)
 
@@ -272,6 +300,7 @@ class HeteroGATEAU(nn.Module):
 class HeteroEGNN(nn.Module):
     """Residual block: 2x HeteroGATEAU + residual on nodes and per-type edges."""
     out_dim: int = 128
+    n_heads: int = 1
     mix_edge_node: bool = False
     add_features: bool = True
     self_edges: bool = False
@@ -284,7 +313,6 @@ class HeteroEGNN(nn.Module):
         *args,
         nodes: jnp.ndarray,
         edge_sets: Tuple[EdgeSet, ...],
-        training: bool = False,
         **kwargs
     ) -> Tuple[jnp.ndarray, Tuple[EdgeSet, ...]]:
         # Save residuals
@@ -294,22 +322,24 @@ class HeteroEGNN(nn.Module):
         # First HeteroGATEAU
         nodes, edge_sets = HeteroGATEAU(
             out_dim=self.out_dim,
+            n_heads=self.n_heads,
             mix_edge_node=self.mix_edge_node,
             add_features=self.add_features,
             self_edges=self.self_edges,
             simple_update=self.simple_update,
             sync_updates=self.sync_updates,
-        )(nodes=nodes, edge_sets=edge_sets, training=training)
+        )(nodes=nodes, edge_sets=edge_sets)
 
         # Second HeteroGATEAU
         nodes, edge_sets = HeteroGATEAU(
             out_dim=self.out_dim,
+            n_heads=self.n_heads,
             mix_edge_node=self.mix_edge_node,
             add_features=self.add_features,
             self_edges=self.self_edges,
             simple_update=self.simple_update,
             sync_updates=self.sync_updates,
-        )(nodes=nodes, edge_sets=edge_sets, training=training)
+        )(nodes=nodes, edge_sets=edge_sets)
 
         # Residual connections
         nodes = nodes + res_nodes
@@ -330,6 +360,7 @@ class HeteroEdgeNet(nn.Module):
     n_actions: int
     inner_size: int = 128
     n_res_layers: int = 5
+    n_heads: int = 2
     attention_pooling: bool = True
     mix_edge_node: bool = False
     add_features: bool = True
@@ -342,9 +373,8 @@ class HeteroEdgeNet(nn.Module):
         self,
         *args,
         graphs: HeteroGraph,
-        training: bool = False,
         **kwargs
-    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         # 1. Embed nodes
         nodes = nn.Dense(self.inner_size)(graphs.nodes)
 
@@ -368,23 +398,27 @@ class HeteroEdgeNet(nn.Module):
         for _ in range(self.n_res_layers):
             nodes, edge_sets = HeteroEGNN(
                 out_dim=self.inner_size,
+                n_heads=self.n_heads,
                 mix_edge_node=self.mix_edge_node,
                 add_features=self.add_features,
                 self_edges=self.self_edges,
                 simple_update=self.simple_update,
                 sync_updates=self.sync_updates,
-            )(nodes=nodes, edge_sets=edge_sets, training=training)
+            )(nodes=nodes, edge_sets=edge_sets)
 
-        # 4. Policy head — uses MOVE edges (index 0)
-        x = BNR()(x=nodes, training=training)
-        move_feats = edge_sets[0].features
-        y = BNR()(x=move_feats, training=training)
-        logits = nn.Dense(self.inner_size)(y)
-        logits = BNR()(x=logits, training=training)
+        # 4. Policy head — uses MOVE edges (index 0) + sender/receiver nodes
+        x = LNR()(x=nodes)
+        move_es = edge_sets[0]
+        sender_feats = x[move_es.senders]
+        receiver_feats = x[move_es.receivers]
+        y = LNR()(x=move_es.features)
+        combined = jnp.concatenate([y, sender_feats, receiver_feats], axis=-1)
+        logits = nn.Dense(self.inner_size)(combined)
+        logits = LNR()(x=logits)
         logits = nn.Dense(1)(logits).squeeze()
         logits = logits[graphs.globals]
 
-        # 5. Value head
+        # 5. WDL Value head
         n_partitions = len(graphs.n_node)
         segment_ids = jnp.repeat(
             jnp.arange(n_partitions),
@@ -393,7 +427,7 @@ class HeteroEdgeNet(nn.Module):
             total_repeat_length=x.shape[0]
         )
         v = nn.Dense(self.inner_size)(x)
-        v = nn.BatchNorm(momentum=0.9)(v, use_running_average=not training)
+        v = nn.LayerNorm()(v)
         v = jax.nn.relu(v)
         if self.attention_pooling:
             v = AttentionPooling()(
@@ -402,11 +436,11 @@ class HeteroEdgeNet(nn.Module):
                 num_segments=graphs.n_node.shape[0]
             )
         v = jax.nn.relu(v)
-        v = nn.Dense(1)(v)
-        v = nn.tanh(v)
-        v = v.squeeze(-1)  # Remove last dimension to match expected shape
+        wdl_logits = nn.Dense(3)(v)                                   # (batch, 3)
+        wdl_probs = jax.nn.softmax(wdl_logits, axis=-1)               # P(win), P(draw), P(loss)
+        value = wdl_probs[..., 0] - wdl_probs[..., 2]                 # scalar: P(win) - P(loss)
 
-        return logits, v
+        return logits, value, wdl_logits
 
 
 # AlphaGateau (deprecated)
@@ -664,64 +698,59 @@ class ModelManager(NamedTuple):
             return self.model.init(key, graphs=x)
         return self.model.init(key, x=x)
 
-    @overload
-    def __call__(
-        self,
-        x,
-        legal_action_mask: jnp.ndarray,
-        params: chex.ArrayTree,
-        training: Literal[False]=False
-    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        ...
-
-    @overload
-    def __call__(
-        self,
-        x,
-        legal_action_mask: jnp.ndarray,
-        params: chex.ArrayTree,
-        training: Literal[True]
-    ) -> Tuple[Tuple[jnp.ndarray, jnp.ndarray], chex.ArrayTree]:
-        ...
-
     def __call__(
         self,
         x,
         legal_action_mask: jnp.ndarray,
         params: chex.ArrayTree,
         training: bool=False
-    ) -> Union[
-        Tuple[jnp.ndarray, jnp.ndarray],
-        Tuple[Tuple[jnp.ndarray, jnp.ndarray], chex.ArrayTree]
-    ]:
-        if self.use_graph:
-            r_tuple, batch_stats = self.model.apply(
+    ):
+        if self.hetero_graph:
+            # HeteroEdgeNet: LayerNorm, no mutable batch_stats, returns 3-tuple
+            result = self.model.apply(
                 cast(Mapping, params),
                 graphs=x,
-                mutable=['batch_stats'],
-                training=training
             )
-        else:
-            r_tuple, batch_stats = self.model.apply(
-                cast(Mapping, params),
-                x=x,
-                mutable=['batch_stats'],
-                training=training
-            )
-        logits, value = r_tuple
-        value = jnp.reshape(value, (-1,))
-        logits = logits.reshape((value.shape[-1], -1))
+            logits, value, wdl_logits = result
+            value = jnp.reshape(value, (-1,))
+            logits = logits.reshape((value.shape[-1], -1))
 
-        # mask invalid actions
-        logits = logits - jnp.max(logits, axis=-1, keepdims=True)
-        logits = jnp.where(
-            legal_action_mask,
-            logits,
-            jnp.finfo(logits.dtype).min
-        )
-        if training:
-            return (logits, value), batch_stats['batch_stats']
-        return logits, value
+            logits = logits - jnp.max(logits, axis=-1, keepdims=True)
+            logits = jnp.where(
+                legal_action_mask,
+                logits,
+                jnp.finfo(logits.dtype).min
+            )
+            return logits, value, wdl_logits
+        else:
+            # Legacy models with BatchNorm
+            if self.use_graph:
+                r_tuple, batch_stats = self.model.apply(
+                    cast(Mapping, params),
+                    graphs=x,
+                    mutable=['batch_stats'],
+                    training=training
+                )
+            else:
+                r_tuple, batch_stats = self.model.apply(
+                    cast(Mapping, params),
+                    x=x,
+                    mutable=['batch_stats'],
+                    training=training
+                )
+            logits, value = r_tuple
+            value = jnp.reshape(value, (-1,))
+            logits = logits.reshape((value.shape[-1], -1))
+
+            logits = logits - jnp.max(logits, axis=-1, keepdims=True)
+            logits = jnp.where(
+                legal_action_mask,
+                logits,
+                jnp.finfo(logits.dtype).min
+            )
+            if training:
+                return (logits, value), batch_stats['batch_stats']
+            return logits, value
 
     def format_data(self, state=None, board=None, observation=None,
             legal_action_mask=None, **kwargs):
@@ -770,7 +799,9 @@ def load_model(
             simple_update=dic['config'].get('simple_update', True),
             sync_updates=dic['config'].get('sync_updates', None),
         )
-        if net is not HeteroEdgeNet:
+        if net is HeteroEdgeNet:
+            net_kwargs['n_heads'] = dic['config'].get('n_heads', 2)
+        else:
             net_kwargs['dot_v2'] = dic['config'].get('dotv2', True)
             net_kwargs['use_embedding'] = dic['config']['use_embedding']
         model = ModelManager(
@@ -781,9 +812,14 @@ def load_model(
             new_graph=dic['config'].get('new_graph', False),
             hetero_graph=dic['config'].get('hetero_graph', False),
         )
-        model_params = {
-            'params': dic['params'],
-            'batch_stats': dic['batch_stats']
-        }
+        if dic['config'].get('hetero_graph', False):
+            # New HeteroEdgeNet: LayerNorm, no batch_stats
+            model_params = {'params': dic['params']}
+        else:
+            # Legacy models: BatchNorm with batch_stats
+            model_params = {
+                'params': dic['params'],
+                'batch_stats': dic['batch_stats']
+            }
     return model, model_params
 

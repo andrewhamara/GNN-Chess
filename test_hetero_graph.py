@@ -73,26 +73,25 @@ def test_model_forward():
     # Initialize
     variables = model.init(jax.random.PRNGKey(42), graphs=graph)
     params = variables['params']
-    batch_stats = variables['batch_stats']
 
-    # Forward pass
-    (logits, value), _ = model.apply(
-        {'params': params, 'batch_stats': batch_stats},
+    # Forward pass (HeteroEdgeNet returns 3-tuple: logits, value, wdl_logits)
+    logits, value, wdl_logits = model.apply(
+        {'params': params},
         graphs=graph,
-        mutable=['batch_stats'],
-        training=False
     )
 
     console.print(f"✓ Logits shape: {logits.shape} (expected: (4672,))")
     console.print(f"✓ Value shape: {value.shape} (expected: (1,))")
     console.print(f"✓ Value range: [{value.min():.3f}, {value.max():.3f}] (expected: [-1, 1])")
+    console.print(f"✓ WDL logits shape: {wdl_logits.shape} (expected: (1, 3))")
 
     assert logits.shape == (4672,), f"Expected (4672,), got {logits.shape}"
     assert value.shape == (1,) or value.shape == (), f"Expected (1,) or (), got {value.shape}"
     assert jnp.abs(value).max() <= 1.1, f"Value should be in [-1, 1], got {value}"
+    assert wdl_logits.shape[-1] == 3, f"Expected 3 WDL logits, got {wdl_logits.shape}"
 
     console.print("[bold green]✓ Test 2 passed![/bold green]")
-    return model, params, batch_stats
+    return model, params
 
 
 def test_jit_compilation():
@@ -119,12 +118,10 @@ def test_jit_compilation():
         return model.apply(
             variables,
             graphs=graphs,
-            mutable=['batch_stats'],
-            training=False
         )
 
     console.print("Compiling model forward pass...")
-    (logits, value), _ = forward(graph)
+    logits, value, wdl_logits = forward(graph)
     console.print("✓ Model forward pass JIT compiled successfully")
 
     console.print("[bold green]✓ Test 3 passed![/bold green]")
@@ -163,14 +160,11 @@ def test_gradient_computation():
 
     variables = model.init(jax.random.PRNGKey(42), graphs=graph)
     params = variables['params']
-    batch_stats = variables['batch_stats']
 
     def loss_fn(params):
-        (logits, value), _ = model.apply(
-            {'params': params, 'batch_stats': batch_stats},
+        logits, value, wdl_logits = model.apply(
+            {'params': params},
             graphs=graph,
-            mutable=['batch_stats'],
-            training=True
         )
         # Dummy loss
         policy_loss = -jnp.mean(logits)
